@@ -1,0 +1,8 @@
+{bishop(1..n,1..n)}.
+:-bishop(R1,C1),bishop(R2,C2),R1!=R2,|R1-R2|=|C1-C2|.
+
+#maximize{1,X,Y:bishop(X,Y)}.
+
+%#show bishop/2.
+
+%clingo D:\Sem1\CSE-579\Assignment3\8.txt 0
