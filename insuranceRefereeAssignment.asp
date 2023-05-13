@@ -1,48 +1,58 @@
-% clingo "C:\Users\Kenji Mah\Desktop\CSE579 Knowledge Representation and Reasoning\insurance refereee problem\code.asp" "C:\Users\Kenji Mah\Desktop\CSE579 Knowledge Representation and Reasoning\insurance refereee problem\simpleInstances\instance3.asp" 
-%--opt-mode=enum 0
-#const maxWorkload = 720.
+%%%%%%%%%%%%%%%%%%%%%%%%%
+% Generate Search space %
+%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%Generate search space = 1-1 function from domain(cases) to codomain(referees)
-{assign(Cid,Rid): referee(Rid,_,_,_,_)}=1 :- case(Cid,_,_,_,_,_).
+1 {assign(Cid, Rid) : referee(Rid, Rtype, Max_Workload, Prev_Workload, Prev_Payment)} 1 :- case(Cid, Ctype, Effort, Damage, Postc, Payment).
 
-%%%%%%%%%%%%  Hard Constraints %%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%
+% Hard Constraints %
+%%%%%%%%%%%%%%%%%%%%
 
-% The maximum number of working minutes of a referee must not be exceeded by the actual workload, 
-%where the actual workload is the sum of the efforts of all cases assigned to this referee.
-:- referee(Rid,_,Max_workload,_,_),Max_workload-S < 0, S=#sum{Effort: case(Cid,_,Effort,_,_,_),referee(Rid,_,_,_,_), assign(Cid,Rid)}.
+% The maximum number of working minutes of a referee must not be exceeded by the actual workload.
+:- Total_Work = #sum{Effort, Rid, Cid : assign(Cid, Rid), case(Cid, Ctype, Effort, Damage, Postc, Payment)}, referee(Rid, Rtype, Max_Workload, Prev_Workload, Prev_Payment), Total_Work > Max_Workload.
 
-% A case must not be assigned to a referee who is not in charge of the region at all
-:- assign(Cid,Rid) , {prefRegion(Rid, Postc,Pref)}=0, case(Cid,_,_,_,Postc,_), referee(Rid,_,_,_,_).
-:- assign(Cid,Rid) , prefRegion(Rid, Postc,0), case(Cid,_,_,_,Postc,_), referee(Rid,_,_,_,_).
+% A case must not be assigned to a referee who is not in charge of the region at all.
+:- assign(Cid, Rid), referee(Rid, Rtype, Max_Workload, Prev_Workload, Prev_Payment), case(Cid, Ctype, Effort, Damage, Postc, Payment), prefRegion(Rid, Postc, 0).
 
-% A case must not be assigned to a referee who is not in charge of the type of the case at all
-:- assign(Cid,Rid), {prefType(Rid, Caset,Pref)}=0, case(Cid,Caset,_,_,_,_), referee(Rid,_,_,_,_).
-:- assign(Cid,Rid), prefType(Rid, Caset,0), case(Cid,Caset,_,_,_,_), referee(Rid,_,_,_,_).
+% A case must not be assigned to a referee who is not in charge of the type of the case at all.
+:- assign(Cid, Rid), referee(Rid, Rtype, Max_Workload, Prev_Workload, Prev_Payment), case(Cid, Ctype, Effort, Damage, Postc, Payment), prefType(Rid, Ctype, 0).
 
 % Cases with an amount of damage that exceeds a certain threshold can only be assigned to internal referees.
-:- assign(Cid,Rid), case(Cid,_,_,Damage,_,_), referee(Rid,e,_,_,_), Damage > X, externalMaxDamage(X).
+:- assign(Cid, Rid), referee(Rid, Rtype, Max_Workload, Prev_Workload, Prev_Payment), case(Cid, Ctype, Effort, Damage, Postc, Payment), Rtype==e, externalMaxDamage(Max_Damage), Damage > Max_Damage.
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%%%%%%%%%%%% Weak Constraints %%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%
+% Weak Constraints %
+%%%%%%%%%%%%%%%%%%%%
 
-% Internal referees are preferred in order to minimize the costs of external ones. 
-:~ C_a=#sum{Payment,Cid,Rid:case(Cid,_,_,_,_,Payment), assign(Cid,Rid), referee(Rid,e,_,_,_)}. [16*C_a]
+% Internal referees are preferred in order to minimize the costs of external ones.
+internalCount(N) :- N = #count{1, Rid : assign(Cid, Rid), referee(Rid, Rtype, Max_Workload, Prev_Workload, Prev_Payment), Rtype == i}.
+#maximize{N : internalCount(N)}.
 
-% The assignment of cases to external referees should be fair in the sense that their overall payment should be balanced
-o_rid(Rid,X) :- referee(Rid,e,_,_,Prev_payment), X=Prev_payment+N, N=#sum{Payment,Cid:case(Cid,_,_,_,_,Payment),assign(Cid,Rid)}.
-averageE(A) :- A=S/N, S=#sum{X,Rid: o_rid(Rid,X)}, N=#count{Rid: referee(Rid,e,_,_,_)}.
-:~ averageE(A), o_rid(Rid,X). [7*|A-X|,Rid]
+% The assignment of cases to external referees should be fair in the sense that their overall payment should be balanced.
+% 1.Calculate the difference between maximum external pay and minimum external pay.
+payment(Rid, Total_Pay) :- Total_Pay = #sum{Payment, Rid, Cid : assign(Cid, Rid), case(Cid, Ctype, Effort, Damage, Postc, Payment)}, referee(Rid, Rtype, Max_Workload, Prev_Workload, Prev_Payment), Rtype == e.
+total_payment(Rid, Total_Payment) :- Total_Payment = Prev_Payment + Total_Pay, referee(Rid, Rtype, Max_Workload, Prev_Workload, Prev_Payment), payment(Rid, Total_Pay), Rtype == e.
+minimum_payment(Rid1_Payment) :- total_payment(Rid1, Rid1_Payment), 0 == #count{1, Rid2 : Rid1_Payment > Rid2_Payment, total_payment(Rid2, Rid2_Payment)}, total_payment(Rid1, Rid1_Payment).
+maximum_payment(Rid1_Payment) :- total_payment(Rid1, Rid1_Payment), 0 == #count{1, Rid2 : Rid1_Payment < Rid2_Payment, total_payment(Rid2, Rid2_Payment)}, total_payment(Rid1, Rid1_Payment).
+payment_diff(Diff_Payment) :- Diff_Payment = (Max_Payment - Min_Payment), maximum_payment(Max_Payment), minimum_payment(Min_Payment).
+
+% 2.Minimize difference.
+#minimize{Diff_Payment, Cid, Rid : payment_diff(Diff_Payment), assign(Cid, Rid), referee(Rid, Rtype, Max_Workload, Prev_Workload, Prev_Payment), case(Cid, Ctype, Effort, Damage, Postc, Payment)}.
+
 
 % The assignment of cases to (internal and external) referees should be fair in the sense that their overall workload should be balanced.
-w_rid(Rid,X) :- referee(Rid,_,_,Prev_workload,_), X=Prev_workload+N, N=#sum{Effort,Cid:case(Cid,_,Effort,_,_,_),assign(Cid,Rid)}.
-average(A) :- A=S/N, S=#sum{X,Rid: w_rid(Rid,X)}, N=#count{Rid: referee(Rid,_,_,_,_)}.
-:~ average(A),w_rid(Rid,X). [9*|A-X|,Rid]
+% 1.Calculate the difference between maximum workload and minimum workload.
+work(Rid, Total_Effort) :- Total_Effort = #sum{Effort, Rid, Cid : assign(Cid, Rid), case(Cid, Ctype, Effort, Damage, Postc, Payment)}, referee(Rid, Rtype, Max_Workload, Prev_Workload, Prev_Payment).
+total_workload(Rid, Total_Workload) :- Total_Workload = Prev_Workload + Total_Effort, referee(Rid, Rtype, Max_Workload, Prev_Workload, Prev_Payment), work(Rid, Total_Effort).
+minimum_workload(Rid1_Workload) :- total_workload(Rid1, Rid1_Workload), 0 == #count{1, Rid2 : Rid1_Workload > Rid2_Workload, total_workload(Rid2, Rid2_Workload)}, total_workload(Rid1, Rid1_Workload).
+maximum_workload(Rid1_Workload) :- total_workload(Rid1, Rid1_Workload), 0 == #count{1, Rid2 : Rid1_Workload < Rid2_Workload, total_workload(Rid2, Rid2_Workload)}, total_workload(Rid1, Rid1_Workload).
+effort_diff(Diff_Workload) :- Diff_Workload = (Max_Workload - Min_Workload), maximum_workload(Max_Workload), minimum_workload(Min_Workload).
 
-% Referees should handle types of cases with higher preference.
-:~ S=#sum{3-Pref,Cid,Rid: assign(Cid,Rid), referee(Rid,_,_,_,_), case(Cid, Caset, _, _, _, _), prefType(Rid,Caset,Pref)}. [34*S]
+% 2.Minimize difference.
+#minimize{Diff_Workload, Cid, Rid : effort_diff(Diff_Workload), assign(Cid, Rid), referee(Rid, Rtype, Max_Workload, Prev_Workload, Prev_Payment), case(Cid, Ctype, Effort, Damage, Postc, Payment)}.
 
 
-% Referees should handle cases in regions with higher preference.
-:~ S=#sum{3-Pref,Cid,Rid: assign(Cid,Rid), referee(Rid,_,_,_,_), case(Cid, Caset, _, _, _, _), prefRegion(Rid,Postc,Pref)}. [34*S]
+% Referees should handle types of cases and regions with higher preference.
+#maximize{Case_Pref + Region_Pref, Rid : assign(Cid, Rid), referee(Rid, Rtype, Max_Workload, Prev_Workload, Prev_Payment), case(Cid, Ctype, Effort, Damage, Postc, Payment), prefRegion(Rid, Postc, Region_Pref), prefType(Rid, Ctype, Case_Pref)}.
 
 #show assign/2.
